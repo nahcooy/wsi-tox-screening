@@ -1,191 +1,195 @@
-# WSI Toxicity Screening Workbench
+# WSI Toxicologic Pathology Screening Workbench
 
-Rat liver H&E whole-slide image toxicity screening GUI that connects slide-level MIL prediction, attention heatmap review, NuLite-H nuclei analysis, case-control morphometric comparison, and an OpenAI API pathology-support report.
+Local FastAPI web application for explainable rat liver H&E WSI toxicity screening.  
+Connects ABMIL slide-level prediction, attention heatmap, NuLite-H nuclei analysis, case-control morphometrics, and a Qwen2.5-VL multimodal agent that autonomously runs the full pipeline and generates a Korean pathology report.
 
-## Project Summary
+---
 
-This project is a local FastAPI web application for explainable rat liver toxicity screening.
+## Pipeline
 
-Pipeline:
-
-```text
-Input WSI
--> TRIDENT preprocessing and UNI v1 feature extraction
--> ABMIL slide-level normal/abnormal inference
--> attention heatmap and top-k patch extraction
--> NuLite-H nuclei segmentation/type inference on top-k patches
--> patch-wise Hep/NPC/Imm morphometric metrics
--> case-control reference comparison
--> OpenAI API Korean pathology decision-support report
+```
+WSI
+ └─ TRIDENT  ──── patch segmentation + UNI-v1 feature extraction
+     └─ ABMIL ─── slide-level normal/abnormal prediction + attention scores
+         └─ NuLite-H ── nuclei segmentation & cell-type classification (top-k patches)
+             └─ Morphometrics ── Hep/NPC/Imm metrics vs. case-control reference
+                 └─ Qwen2.5-VL Agent ── multimodal tool-calling loop → Korean pathology report
 ```
 
-The current product UI is the backend-served static workbench in:
+---
 
-```text
-backend/app/static/
-```
+## Features
 
-The older React/Vite scaffold remains in `frontend/`, but it is not the active GUI path.
+| Category | Detail |
+|---|---|
+| **Pipeline** | One-click: preprocess → inference → nuclei → report |
+| **Agent** | Qwen2.5-VL-72B via vLLM; tool-call loop with `tool_choice="required"` until all analysis tools are called |
+| **Multimodal** | Agent directly views top-attention H&E patches and NuLite overlay images |
+| **Live log** | Structured real-time log (thinking / tool_call / tool_result / complete) streamed to UI |
+| **Attention** | Heatmap thumbnail, QuPath GeoJSON export, spatial quadrant analysis |
+| **Nuclei** | NuLite-H cell type counts, patch overlay gallery, NuLite GeoJSON export |
+| **Metrics** | Patch-wise Hep/NPC/Imm morphometrics vs. matched case/control Z-scores |
+| **Report** | Manual (Qwen direct) and Agent (autonomous loop) reports, saved as Markdown |
+| **Exports** | QuPath GeoJSON, Top-25 manifest, Cell type CSV, Patch metrics CSV, Metric comparison JSON |
 
-## Current Features
-
-- Select and copy a WSI slide into a per-slide run directory.
-- Auto-detect existing run artifacts when the same slide is selected again.
-- Run TRIDENT single-slide preprocessing.
-- Run ABMIL inference with logits, softmax, prediction, confidence, top-k patches, and attention outputs.
-- Render a high-resolution attention heatmap thumbnail.
-- Export QuPath-compatible attention GeoJSON colored with `Spectral_r_high_red`.
-- Run NuLite-H on top-k high-attention patch crops.
-- Show NuLite-H cell type counts, patch overlay gallery, and clickable full-size patch contour view.
-- Toggle transparent contour fill on/off.
-- Compute patch-wise liver cell-group metrics using the local Hep/NPC/Imm mapping.
-- Compare top-k patch metrics against matched case/control reference statistics.
-- Generate, save, reload, and render a markdown LLM diagnostic report in page 4.
-- Show stage status and elapsed seconds for preprocessing, inference, NuLite, and LLM report generation.
+---
 
 ## Quick Start
 
-```bash
-cd /home/nahcooy/MIL/MIL_260527/wsi-tox-screening
-./.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir backend
-```
+### 1. Requirements
 
-Open:
+- Python 3.11+
+- [TRIDENT](https://github.com/mahmoodlab/TRIDENT) for preprocessing/feature extraction
+- [NuLite](https://github.com/A-Haider13/NuLite) for nuclei inference
+- [vLLM](https://github.com/vllm-project/vllm) serving Qwen2.5-VL-72B with Hermes tool-call parser
 
-```text
-http://127.0.0.1:8000
-```
-
-API docs:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Health check:
+### 2. Install
 
 ```bash
-curl -s http://127.0.0.1:8000/api/health
+cd backend
+pip install -e .
 ```
 
-## Main Workflow
+### 3. Configure
 
-1. Select a WSI file.
-2. If an existing run is found under `outputs/runs/{slide_id}`, the UI loads it automatically.
-3. Otherwise click `Copy Slide To Run Dir`.
-4. Click `Run Preprocess`.
-5. Click `Run Model Inference`.
-6. Review page `1 Attention`.
-7. Click `Run Nuclei Level Analysis`.
-8. Review page `2 NuLite` and page `3 Metrics`.
-9. Click `Generate Diagnostic Report` on page `4 LLM`.
+```bash
+cp .env.example .env
+# Edit .env with your paths
+```
+
+Key variables:
+
+```env
+TRIDENT_ROOT=/path/to/TRIDENT
+TRIDENT_PYTHON=/path/to/envs/trident/bin/python
+
+MIL_LAB_ROOT=/path/to/MIL-Lab
+MIL_PYTHON=/path/to/envs/mil/bin/python
+DEFAULT_ABMIL_CHECKPOINT=models/mil/best_grandqc_univ1_abmil_h5_new_label.pth
+
+NULITE_ROOT=/path/to/NuLite_patch_wise_inference
+NULITE_PYTHON=/path/to/envs/nulite/bin/python
+DEFAULT_NULITE_H_CHECKPOINT=models/nulite/NuLite-H-Weights.pth
+
+MATCHED_DATASET_CSV=/path/to/case_control_matched.csv
+CELLTYPE_SUMMARY_CSV=/path/to/summary_celltype.csv
+
+# Qwen2.5-VL via vLLM
+AGENT_BASE_URL=http://localhost:8080
+AGENT_MODEL=/path/to/Qwen2.5-VL-72B-Instruct-AWQ
+AGENT_API_KEY=EMPTY
+```
+
+### 4. Start vLLM (Qwen2.5-VL-72B)
+
+```bash
+vllm serve /path/to/Qwen2.5-VL-72B-Instruct-AWQ \
+  --port 8080 \
+  --tool-call-parser hermes \
+  --enable-auto-tool-choice \
+  --limit-mm-per-prompt image=10 \
+  --max-model-len 16384
+```
+
+### 5. Start the workbench
+
+```bash
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Open `http://localhost:8000`
+
+---
+
+## Agent Mode
+
+Click **Run Agent** to let the agent autonomously:
+
+1. Check pipeline status → run any missing steps (preprocess / inference / nuclei)
+2. Call `get_mil_summary`, `get_attention_heatmap`, `get_nuclei_summary`, `get_metric_comparison`
+3. View top-attention H&E patches and NuLite overlays directly as images
+4. Generate a Korean NTP/INHAND-terminology pathology report
+
+The agent enforces `tool_choice="required"` until all four analysis tools have been called, preventing the model from skipping to text generation early.
+
+---
 
 ## Output Layout
 
-Outputs are organized per slide:
-
-```text
+```
 outputs/runs/{slide_id}/
   run.json
   slide/
-  trident/
+  trident/                    # TRIDENT features (.h5)
   mil/
+    mil_result.json
+    attention_scores.csv
+    attention_heatmap_thumbnail.png
+    attention_heatmap_qupath.geojson
+    topk/
+      top25_patches.json
+      rank_*.png
   nuclei/
+    nuclei_summary.json
+    nuclei_instances.geojson
+    cell_type_counts.csv
+    patch_metrics.json
+    metric_comparison.json
+    overlays/
+      rank_*_nulite_overlay.png
   report/
+    diagnostic_report.md
+    diagnostic_report.json
+  agent_run/
+    live_status.json          # real-time agent progress
+    agent_report.md
+    agent_report.json
 ```
 
-Key files:
+---
 
-```text
-mil/mil_result.json
-mil/attention_scores.csv
-mil/attention_heatmap_qupath.geojson
-mil/attention_heatmap_thumbnail.png
-mil/topk/top25_patches.json
-mil/topk/rank_*.png
+## Cell Type Mapping
 
-nuclei/nuclei_summary.json
-nuclei/all_instances.json
-nuclei/all_instances.jsonl
-nuclei/nuclei_instances.geojson
-nuclei/cell_type_counts.csv
-nuclei/patch_metrics.json
-nuclei/patch_metrics.csv
-nuclei/metric_comparison.json
-nuclei/overlays/rank_*_nulite_overlay.png
+NuLite-H was trained on PanNuke (pan-cancer human tissue). Labels are remapped for rat liver:
 
-report/diagnostic_report.json
-report/diagnostic_report.md
-report/diagnostic_report_input.json
+| NuLite label | Rat liver interpretation | Morphometric group |
+|---|---|---|
+| Neoplastic | Large hepatocytes (expected majority in normal liver) | Hep |
+| Epithelial (area ≥ 30 µm²) | Hepatocytes | Hep |
+| Epithelial (area < 30 µm²) | Non-parenchymal cells | NPC |
+| Connective | Portal fibroblasts, endothelium | NPC |
+| Inflammatory | Lymphocytes, Kupffer cells | Imm |
+| Dead / Background | Excluded | — |
+
+> A high "Neoplastic" ratio in a normal liver prediction is expected and does **not** indicate true neoplasia.
+
+---
+
+## Model Weights
+
+Model weights are **not** included in this repository.
+
+```
+models/mil/   ← place ABMIL checkpoint here
+models/nulite/ ← place NuLite-H weights here
 ```
 
-## Data And Model Context
-
-- Dataset context: TG-GATEs rat liver H&E WSI.
-- Slide-level model: ABMIL with UNI v1 features.
-- Preprocessing/feature extraction: TRIDENT.
-- Nuclei model: NuLite-H.
-- Nuclei classes used in the UI:
-  - `1 Neoplastic`
-  - `2 Inflammatory`
-  - `3 Connective`
-  - `4 Dead`
-  - `5 Epithelial`
-- Cell-group mapping for patch metrics:
-  - `Neoplastic -> Hep`
-  - `Epithelial -> Hep` if `area_um2 >= 30`, otherwise `NPC`
-  - `Connective -> NPC`
-  - `Inflammatory -> Imm`
-  - `Dead/Background -> excluded`
-
-## Configuration
-
-Runtime configuration is read from environment variables and `.env`.
-
-Copy or edit:
-
-```text
-.env.example
-```
-
-Important variables:
-
-```text
-TRIDENT_ROOT
-TRIDENT_PYTHON
-MIL_LAB_ROOT
-MIL_PYTHON
-DEFAULT_ABMIL_CHECKPOINT
-NULITE_ROOT
-NULITE_PYTHON
-DEFAULT_NULITE_H_CHECKPOINT
-MATCHED_DATASET_CSV
-CELLTYPE_SUMMARY_CSV
-OPENAI_API_KEY
-OPENAI_MODEL
-```
-
-Do not commit `.env`; it may contain secrets. The repository `.gitignore` excludes it.
-
-## Documentation
-
-Current docs:
-
-```text
-docs/README.md
-docs/WORKFLOW.md
-docs/OPERATIONS.md
-```
+---
 
 ## Tests
 
 ```bash
-cd /home/nahcooy/MIL/MIL_260527/wsi-tox-screening
-./.venv/bin/pytest backend/tests
+cd backend
+pytest tests/
 ```
 
-Last verified test suite:
+---
 
-```text
-5 passed
-```
+## References
+
+- Thoolen et al. (2010). Proliferative and nonproliferative lesions of the rat and mouse hepatobiliary system. *Toxicol Pathol* 38(7 Suppl):5S–81S.
+- [NTP Nonneoplastic Lesion Atlas](https://ntp.niehs.nih.gov/nnl)
+- Chen et al. (2024). [TRIDENT](https://github.com/mahmoodlab/TRIDENT) — Universal WSI preprocessing.
+- [NuLite](https://github.com/A-Haider13/NuLite) — Lightweight nuclei instance segmentation.
+- [Qwen2.5-VL](https://github.com/QwenLM/Qwen2.5-VL) — Multimodal language model.
