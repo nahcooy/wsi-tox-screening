@@ -8,3 +8,11 @@ node_modules/
 outputs/*
 !outputs/.gitkeep
 
+
+# model weights
+models/mil/*.pth
+models/nulite/*.pth
+backend/outputs/
+# backend outputs
+backend/outputs/*
+!backend/outputs/.gitkeep

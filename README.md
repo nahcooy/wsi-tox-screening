@@ -7,30 +7,61 @@ Connects ABMIL slide-level prediction, attention heatmap, NuLite-H nuclei analys
 
 ## Pipeline
 
-```
-WSI
- └─ TRIDENT  ──── patch segmentation + UNI-v1 feature extraction
-     └─ ABMIL ─── slide-level normal/abnormal prediction + attention scores
-         └─ NuLite-H ── nuclei segmentation & cell-type classification (top-k patches)
-             └─ Morphometrics ── Hep/NPC/Imm metrics vs. case-control reference
-                 └─ Qwen2.5-VL Agent ── multimodal tool-calling loop → Korean pathology report
-```
+| # | Stage | Model / Tool | Input | Output |
+|---|---|---|---|---|
+| 1 | **Preprocessing** | TRIDENT + UNI-v1 | WSI file | `features.h5` (N_patches × 1024) |
+| 2 | **Slide Inference** | ABMIL | `features.h5` | prediction, softmax, attention scores, top-25 patches |
+| 3 | **Nuclei Analysis** | NuLite-H | top-25 H&E crops | cell type counts, overlays, morphometric Z-scores |
+| 4 | **Agent Loop** | Qwen2.5-VL-72B | pipeline outputs + images | tool call results, visual observations |
+| 5 | **Report** | Qwen2.5-VL-72B | collected data | Korean NTP/INHAND pathology report (.md) |
 
 ---
 
-## Features
+## Agent Loop
 
-| Category | Detail |
-|---|---|
-| **Pipeline** | One-click: preprocess → inference → nuclei → report |
-| **Agent** | Qwen2.5-VL-72B via vLLM; tool-call loop with `tool_choice="required"` until all analysis tools are called |
-| **Multimodal** | Agent directly views top-attention H&E patches and NuLite overlay images |
-| **Live log** | Structured real-time log (thinking / tool_call / tool_result / complete) streamed to UI |
-| **Attention** | Heatmap thumbnail, QuPath GeoJSON export, spatial quadrant analysis |
-| **Nuclei** | NuLite-H cell type counts, patch overlay gallery, NuLite GeoJSON export |
-| **Metrics** | Patch-wise Hep/NPC/Imm morphometrics vs. matched case/control Z-scores |
-| **Report** | Manual (Qwen direct) and Agent (autonomous loop) reports, saved as Markdown |
-| **Exports** | QuPath GeoJSON, Top-25 manifest, Cell type CSV, Patch metrics CSV, Metric comparison JSON |
+![Agent Loop Overview](docs/overview.png)
+
+The agent starts by checking pipeline status, runs any missing stages, then calls four required analysis tools before switching to autonomous multimodal exploration and report generation.
+
+---
+
+## Agent Tools
+
+### Pipeline Tools — 파이프라인 실행 및 상태 관리
+
+| Tool | 설명 | 읽는 데이터 | 출력 |
+|---|---|---|---|
+| `get_pipeline_status` | 각 단계 완료 여부 확인. 에이전트 시작 시 항상 첫 번째로 호출 | `features.h5`, `mil_result.json`, `nuclei_summary.json` 존재 여부 | preprocess / inference / nuclei 상태 |
+| `run_preprocess_pipeline` | TRIDENT 실행 (세그멘테이션 → 좌표 추출 → UNI-v1 특징 추출) | WSI 파일 (`.svs`/`.ndpi` 등) | `features.h5` (N_patches × 1024), 실시간 `[PROGRESS N%]` 로그 |
+| `run_inference_pipeline` | ABMIL 추론 실행 | `trident/.../features.h5` | `mil_result.json`, `attention_scores.csv`, heatmap PNG/GeoJSON, `topk/rank_*.png` |
+| `run_nulite_topk_pipeline` | NuLite-H 핵 분할 실행 (top-25 패치) | `mil/topk/rank_*.png`, `mil/topk/top25_patches.json` | `nuclei_summary.json`, `overlays/rank_*_nulite_overlay.png`, `metric_comparison.json` |
+
+### Analysis Tools — 정량 데이터 조회 (JSON → LLM context)
+
+| Tool | 설명 | 읽는 데이터 | 출력 |
+|---|---|---|---|
+| `get_mil_summary` | ABMIL 예측 결과 조회 | `mil/mil_result.json` | prediction, softmax, logits, confidence, num_patches |
+| `get_attention_heatmap` | 어텐션 공간 분포 조회 | `mil/attention_scores.csv`, `mil/mil_result.json` (슬라이드 크기) | attention 통계(mean/max/p25/p75), dominant_quadrant, 사분면별 patch 수, top-25 좌표 |
+| `get_nuclei_summary` | NuLite-H 전체 핵 통계 조회 | `nuclei/nuclei_summary.json` | total_nuclei, type_counts (Neoplastic / Epithelial / Inflammatory / Connective / Dead) |
+| `get_metric_comparison` | Case-control 형태계측 비교 조회 | `nuclei/metric_comparison.json` | 11개 지표별 Z-score, percentile_vs_control, closer_to (case/control) |
+| `get_patch_metrics` | 특정 rank 패치의 Hep/NPC/Imm 메트릭 조회 | `nuclei/patch_metrics.json` | 패치별 Area_Mean, Circularity, Solidity, AspectRatio 등 11개 지표 |
+| `get_all_patch_attention` | 전체 패치 어텐션 점수 조회 (내림차순) | `mil/attention_scores.csv` (없으면 `mil/topk/top25_patches.json`) | 전 패치 patch_id, attention_raw, attention_norm, x, y |
+| `run_tta_inference` | Test-Time Augmentation 반복 추론 | `trident/.../features.h5`, `mil_result.json` (checkpoint 경로) | majority_vote, mean_softmax, std_softmax, 95% CI, trial별 softmax |
+
+### Multimodal Tools — 이미지 직접 관찰 (base64 → LLM vision)
+
+| Tool | 설명 | 읽는 데이터 | 출력 |
+|---|---|---|---|
+| `get_topk_patches` | 상위 어텐션 H&E 패치 이미지 조회 | `mil/topk/top25_patches.json`, `mil/topk/rank_*.png` | H&E 크롭 이미지 (base64) + 좌표·attention_raw/norm |
+| `get_nulite_overlays` | NuLite-H 핵 분할 오버레이 이미지 조회 | `nuclei/nuclei_summary.json`, `nuclei/overlays/rank_*_nulite_overlay.png` | 핵 윤곽선 오버레이 이미지 (base64) + cell_count, type_counts |
+| `extract_patch_image` | top-25 외 패치 이미지 직접 추출 (openslide) | `trident/.../patches/{slide_id}_patches.h5` (좌표), WSI 파일 (픽셀) | H&E 크롭 이미지 (base64) |
+
+### On-demand Tools — 추가 분석 (선택적)
+
+| Tool | 설명 | 읽는 데이터 | 출력 |
+|---|---|---|---|
+| `run_nulite_on_patches` | top-25 외 패치에 NuLite-H 즉시 실행 (~2–5분) | `trident/.../patches/{slide_id}_patches.h5` (좌표), WSI 파일, NuLite-H 모델 가중치 | total_nuclei, type_counts, 오버레이 이미지 (base64) |
+| `compute_metrics_for_patches` | 지정 패치 Hep/NPC/Imm 형태계측 계산 + case-control 비교 | `nuclei/on_demand/run_*/instances.json`, `matched_dataset_csv`, `celltype_summary_csv` | 11개 지표 Z-score, percentile_vs_control, closer_to |
 
 ---
 
@@ -102,26 +133,13 @@ Open `http://localhost:8000`
 
 ---
 
-## Agent Mode
-
-Click **Run Agent** to let the agent autonomously:
-
-1. Check pipeline status → run any missing steps (preprocess / inference / nuclei)
-2. Call `get_mil_summary`, `get_attention_heatmap`, `get_nuclei_summary`, `get_metric_comparison`
-3. View top-attention H&E patches and NuLite overlays directly as images
-4. Generate a Korean NTP/INHAND-terminology pathology report
-
-The agent enforces `tool_choice="required"` until all four analysis tools have been called, preventing the model from skipping to text generation early.
-
----
-
 ## Output Layout
 
 ```
 outputs/runs/{slide_id}/
   run.json
   slide/
-  trident/                    # TRIDENT features (.h5)
+  trident/                         # TRIDENT features (.h5)
   mil/
     mil_result.json
     attention_scores.csv
@@ -142,7 +160,7 @@ outputs/runs/{slide_id}/
     diagnostic_report.md
     diagnostic_report.json
   agent_run/
-    live_status.json          # real-time agent progress
+    live_status.json               # real-time agent progress
     agent_report.md
     agent_report.json
 ```
