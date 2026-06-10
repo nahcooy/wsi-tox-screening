@@ -1,0 +1,145 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #18201f;
+  background: #f5f7f6;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.workbench {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid #d9dfdc;
+  background: #ffffff;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #ecefed;
+  color: #495650;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status.ok {
+  background: #d9f0e2;
+  color: #17603a;
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px minmax(360px, 1fr) 360px;
+}
+
+.panel {
+  padding: 20px;
+  background: #ffffff;
+  border-right: 1px solid #d9dfdc;
+}
+
+.panel:last-child {
+  border-right: 0;
+  border-left: 1px solid #d9dfdc;
+}
+
+.panel h1,
+.panel h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+}
+
+.panel label {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  color: #45534f;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.panel input,
+.panel button {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c8d1cd;
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.panel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  border-color: #176b80;
+  background: #176b80;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.panel button:disabled {
+  border-color: #c8d1cd;
+  background: #eef1ef;
+  color: #7a8580;
+}
+
+.viewer {
+  padding: 18px;
+}
+
+.viewerSurface {
+  position: relative;
+  min-height: 520px;
+  border: 1px solid #cfd8d4;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(30, 30, 30, 0.04) 1px, transparent 1px),
+    linear-gradient(rgba(30, 30, 30, 0.04) 1px, transparent 1px),
+    #f7ddd9;
+  background-size: 42px 42px;
+}
+
+.viewerSurface span {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #263331;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+pre {
+  padding: 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #101715;
+  color: #c6f6d5;
+  font-size: 12px;
+}
+

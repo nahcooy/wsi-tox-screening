@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>병리 WSI 독성 판정을 위한 자율 진단 에이전트 시스템</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <strong>자율 진단 에이전트 시스템</strong>
+          <span id="health-pill" class="pill">checking</span>
+        </div>
+        <div class="top-bar-center">
+          <div class="mode-toggle" role="group" aria-label="UI mode">
+            <button id="mode-manual" class="mode-btn active" type="button">Manual</button>
+            <button id="mode-agent" class="mode-btn" type="button">Agent</button>
+          </div>
+        </div>
+        <div class="top-bar-right">
+          <span id="poll-indicator" class="poll-indicator" title="마지막 상태 업데이트 시각"></span>
+          <a href="/docs">API Docs</a>
+        </div>
+      </header>
+
+      <section class="layout">
+        <!-- ── 좌측: 설정 패널 ──────────────────────────────── -->
+        <aside class="panel config-panel">
+          <h1>Configuration</h1>
+
+          <label>
+            Slide
+            <input id="slide-file" type="file" accept=".svs,.tif,.tiff,.ndpi,.mrxs,.scn,.vms,.vmu" />
+          </label>
+          <div id="selected-slide" class="file-name">No slide selected</div>
+
+          <label>
+            MIL model
+            <select id="mil-model" disabled>
+              <option selected>abmil</option>
+            </select>
+          </label>
+
+          <label>
+            Hugging Face token
+            <input id="hf-token" type="password" placeholder="Use environment token if blank" />
+          </label>
+
+          <button id="upload-slide">Prepare Slide for Processing</button>
+          <div id="upload-progress-bar" class="upload-progress-wrap" style="display:none">
+            <div class="upload-progress-track">
+              <div id="upload-progress-fill" class="upload-progress-fill"></div>
+            </div>
+            <span id="upload-progress-label" class="upload-progress-label">0%</span>
+          </div>
+
+          <!-- ── Manual Mode Controls ── -->
+          <div id="manual-controls">
+            <div class="step-group">
+              <button id="run-preprocess" disabled
+                data-reason="Slide 준비 후 활성화됩니다">Run Preprocess</button>
+              <span id="reason-preprocess" class="disabled-reason"></span>
+            </div>
+
+            <div class="step-group">
+              <button id="run-inference" disabled
+                data-reason="Preprocess 완료 후 활성화됩니다">Run Model Inference</button>
+              <span id="reason-inference" class="disabled-reason"></span>
+            </div>
+
+            <div class="step-group">
+              <button id="run-nuclei" disabled
+                data-reason="Model Inference 완료 후 활성화됩니다">Run Nuclei Level Analysis</button>
+              <span id="reason-nuclei" class="disabled-reason"></span>
+            </div>
+          </div>
+
+          <!-- ── Agent Mode Controls ── -->
+          <div id="agent-controls" style="display:none">
+            <div class="agent-mode-card">
+              <div class="agent-mode-header">
+                <span class="agent-mode-icon">🤖</span>
+                <strong>Agent Auto-Run</strong>
+              </div>
+              <p class="agent-mode-desc">
+                슬라이드 업로드 후 클릭 한 번으로 전처리 → 추론 → 핵 분석 → 보고서 생성까지
+                에이전트가 자율적으로 실행합니다.
+              </p>
+              <label class="agent-instructions-label">
+                추가 지시사항 <span class="optional-tag">(선택)</span>
+                <textarea id="agent-instructions" class="agent-instructions"
+                  rows="3"
+                  placeholder="예: top-25 이외 패치도 집중 분석, 염증 소견 위주로 분석..."></textarea>
+              </label>
+              <button id="run-agent-full" disabled class="btn-agent-run">
+                Run Agent
+              </button>
+              <span id="agent-run-status" class="agent-run-status"></span>
+            </div>
+
+            <!-- Agent Live Trace -->
+            <div id="agent-live-panel" class="agent-live-panel" style="display:none">
+              <div class="agent-live-header">
+                <strong>Agent Progress</strong>
+                <span id="agent-live-state" class="agent-state-pill"></span>
+              </div>
+              <div class="agent-pipeline-status">
+                <span class="pipeline-step" id="ps-preprocess" data-label="Preprocess">⬜ Preprocess</span>
+                <span class="pipeline-arrow">→</span>
+                <span class="pipeline-step" id="ps-inference" data-label="Inference">⬜ Inference</span>
+                <span class="pipeline-arrow">→</span>
+                <span class="pipeline-step" id="ps-nuclei" data-label="Nuclei">⬜ Nuclei</span>
+                <span class="pipeline-arrow">→</span>
+                <span class="pipeline-step" id="ps-analysis" data-label="Analysis">⬜ Analysis</span>
+              </div>
+              <div id="agent-live-log" class="agent-live-log"></div>
+            </div>
+          </div>
+
+          <!-- 단계별 Export 안내 -->
+          <div class="export-legend">
+            <h2>Exports</h2>
+            <div class="export-stage">
+              <span class="export-stage-label">After Inference</span>
+              <a id="geojson-download" class="download-link disabled" href="#" download>QuPath GeoJSON</a>
+              <a id="topk-download" class="download-link disabled" href="#" download>Top-25 Manifest</a>
+            </div>
+            <div class="export-stage">
+              <span class="export-stage-label">After Nuclei</span>
+              <a id="nuclei-geojson-download" class="download-link disabled" href="#" download>NuLite GeoJSON</a>
+              <a id="nuclei-counts-download" class="download-link disabled" href="#" download>Cell Type Counts</a>
+              <a id="patch-metrics-download" class="download-link disabled" href="#" download>Patch Metrics</a>
+              <a id="metric-comparison-download" class="download-link disabled" href="#" download>Metric Comparison</a>
+            </div>
+            <div class="export-stage">
+              <span class="export-stage-label">After Report</span>
+              <a id="report-download" class="download-link disabled" href="#" download>Diagnostic Report (.md)</a>
+            </div>
+          </div>
+        </aside>
+
+        <!-- ── 중앙: 뷰어 ──────────────────────────────────── -->
+        <section class="viewer">
+          <nav class="stage-tabs" aria-label="Result views">
+            <button class="tab-button active" type="button" data-tab-target="attention-tab"
+              data-requires="">1 Attention</button>
+            <button class="tab-button" type="button" data-tab-target="nuclei-tab"
+              data-requires="inference">2 NuLite</button>
+            <button class="tab-button" type="button" data-tab-target="metrics-tab"
+              data-requires="nuclei">3 Metrics</button>
+            <button class="tab-button" type="button" data-tab-target="llm-tab"
+              data-requires="nuclei">4 LLM</button>
+            <button class="tab-button agent-only-tab" type="button" data-tab-target="agent-log-tab"
+              data-requires="" style="display:none">🤖 Agent Log</button>
+          </nav>
+
+          <!-- Tab 1: Attention -->
+          <section id="attention-tab" class="result-stage tab-panel">
+            <div class="heatmap-toolbar">
+              <label class="toggle-label" title="WSI 슬라이드 썸네일을 배경으로 표시">
+                <input id="heatmap-bg-toggle" type="checkbox" checked />
+                Thumbnail
+              </label>
+              <label class="toggle-label" title="어텐션 히트맵 패치 오버레이 표시">
+                <input id="heatmap-fill-toggle" type="checkbox" checked />
+                Heatmap
+              </label>
+            </div>
+            <div id="heatmap-frame" class="heatmap-frame">
+              <canvas id="heatmap-canvas" style="display:none"></canvas>
+              <img id="heatmap-image" alt="Attention heatmap" style="display:none" />
+              <span id="empty-heatmap">Heatmap appears after model inference</span>
+            </div>
+
+            <h2>Top 25 Patches</h2>
+            <div id="topk-grid" class="topk-grid"></div>
+          </section>
+
+          <!-- Tab 2: NuLite -->
+          <section id="nuclei-tab" class="result-stage tab-panel" hidden>
+            <div class="nuclei-summary">
+              <div>
+                <span class="metric-label">Total nuclei</span>
+                <strong id="nuclei-total">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Analyzed patches</span>
+                <strong id="nuclei-patches">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Model</span>
+                <strong id="nuclei-model">-</strong>
+              </div>
+            </div>
+
+            <section class="nuclei-detail">
+              <div class="nuclei-detail-toolbar">
+                <h2 id="nuclei-detail-title">Selected Patch</h2>
+                <label class="toggle-label" title="세포 윤곽선 내부를 색으로 채웁니다">
+                  <input id="contour-fill-toggle" type="checkbox" checked />
+                  Fill contours
+                </label>
+              </div>
+              <div id="nuclei-detail-frame" class="nuclei-detail-frame">
+                <span id="nuclei-detail-empty">Click a NuLite patch to inspect contours.</span>
+              </div>
+              <div id="nuclei-detail-error" class="nuclei-error" style="display:none"></div>
+            </section>
+
+            <!-- 세포유형 색상 범례 -->
+            <div class="cell-type-legend">
+              <span class="legend-item"><span class="legend-swatch" style="background:#ff0000"></span>Neoplastic (Hep)</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:#ff9f44"></span>Epithelial (Hep/NPC)</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:#235cec"></span>Connective (NPC)</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:#22dd4d"></span>Inflammatory (Imm)</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:#e07b2a"></span>Dead</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:#777777"></span>Background</span>
+            </div>
+
+            <h2>Cell Type Counts</h2>
+            <div id="nuclei-type-counts" class="type-counts"></div>
+
+            <h2>NuLite Patch Overlays</h2>
+            <div id="nuclei-overlay-grid" class="topk-grid"></div>
+          </section>
+
+          <!-- Tab 3: Metrics -->
+          <section id="metrics-tab" class="result-stage tab-panel" hidden>
+            <div class="metrics-summary">
+              <div>
+                <span class="metric-label">Reference</span>
+                <strong id="metrics-reference">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Patch metrics</span>
+                <strong id="metrics-patch-count">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Mapping</span>
+                <strong>NuLite → Hep / NPC / Imm</strong>
+              </div>
+            </div>
+
+            <h2>Case-Control Distribution Comparison
+              <span class="table-hint">Z vs control: case 값이 control 분포에서 몇 표준편차 벗어났는지. |Z| &gt; 2 이면 유의미한 차이.</span>
+            </h2>
+            <div id="metric-comparison-table" class="metric-table"></div>
+
+            <h2>Patch-wise Metrics</h2>
+            <div id="patch-metric-table" class="metric-table"></div>
+          </section>
+
+          <!-- Tab 4: LLM Report -->
+          <section id="llm-tab" class="result-stage tab-panel" hidden>
+            <div class="report-toolbar">
+              <div>
+                <h2>Diagnostic Report</h2>
+                <p id="report-state" class="muted">Generate after NuLite metrics are ready.</p>
+              </div>
+              <button id="generate-report" type="button" disabled
+                data-reason="Nuclei Analysis 완료 후 활성화됩니다">Generate Report</button>
+            </div>
+            <article id="diagnostic-report" class="report-panel">
+              <div class="muted">Saved report will appear here, or press generate after nuclei analysis.</div>
+            </article>
+          </section>
+
+          <!-- Tab 5: Agent Log (agent mode only) -->
+          <section id="agent-log-tab" class="result-stage tab-panel" hidden>
+            <div class="agent-log-header">
+              <h2>Agent Execution Log</h2>
+              <div class="agent-log-meta">
+                <span id="agent-log-state-badge" class="agent-state-pill"></span>
+                <span id="agent-log-iter" class="muted" style="font-size:0.82rem"></span>
+              </div>
+            </div>
+            <div id="agent-log-console" class="agent-log-console">
+              <span class="log-empty">Agent 실행 시 여기에 step별 로그가 표시됩니다.</span>
+            </div>
+          </section>
+        </section>
+
+        <!-- ── 우측: 상태 패널 ──────────────────────────────── -->
+        <aside class="panel result-panel">
+          <h2>Run Status</h2>
+          <dl>
+            <dt>Slide ID</dt>
+            <dd id="status-slide-id">-</dd>
+            <dt>Copy</dt>
+            <dd><span id="status-copy" class="state not-started">not_started</span></dd>
+            <dt>Preprocess</dt>
+            <dd>
+              <span id="status-preprocess" class="state not-started">not_started</span>
+              <span id="time-preprocess" class="stage-time"></span>
+            </dd>
+            <dt>Inference</dt>
+            <dd>
+              <span id="status-inference" class="state not-started">not_started</span>
+              <span id="time-inference" class="stage-time"></span>
+            </dd>
+            <dt>Nuclei</dt>
+            <dd>
+              <span id="status-nuclei" class="state not-started">not_started</span>
+              <span id="time-nuclei" class="stage-time"></span>
+            </dd>
+            <dt>LLM</dt>
+            <dd>
+              <span id="status-report" class="state not-started">not_started</span>
+              <span id="time-report" class="stage-time"></span>
+            </dd>
+          </dl>
+
+          <h2>Model Confidence</h2>
+          <div id="confidence-panel" class="confidence-panel"></div>
+          <pre id="logit-output">{}</pre>
+
+          <h2>Details</h2>
+          <pre id="status-output">{}</pre>
+        </aside>
+      </section>
+    </main>
+    <script src="/static/main.js"></script>
+  </body>
+</html>
