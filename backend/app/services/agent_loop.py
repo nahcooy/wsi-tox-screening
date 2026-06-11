@@ -827,7 +827,7 @@ def run_agent_full(
         # 파이프라인 미완료 또는 핵심 분석 도구 미호출 시 tool_choice="required"
         pl = live["pipeline"]
         pipeline_done = all(
-            pl.get(k) in ("completed", "already_completed")
+            pl.get(k) in ("completed", "already_completed", "failed")
             for k in ("preprocess", "inference", "nuclei_topk")
         )
         analysis_done = _REQUIRED_ANALYSIS_TOOLS.issubset(_called_tools)

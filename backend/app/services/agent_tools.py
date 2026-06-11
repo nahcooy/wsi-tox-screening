@@ -720,6 +720,11 @@ def run_preprocess_pipeline(slide_id: str) -> dict:
     env.setdefault("MPLCONFIGDIR", "/tmp/wsi-tox-screening-mpl")
     env.setdefault("WANDB_DISABLED", "true")
     env.setdefault("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+    # prepend conda env's lib to LD_LIBRARY_PATH so optree/_C.so finds GLIBCXX_3.4.31
+    conda_lib = Path(str(settings.trident_python)).parent.parent / "lib"
+    if conda_lib.exists():
+        existing_ld = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{conda_lib}:{existing_ld}" if existing_ld else str(conda_lib)
 
     log_path = trident_dir / "trident_pipeline.log"
     try:
