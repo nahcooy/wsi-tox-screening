@@ -818,6 +818,7 @@ def run_agent_full(
     # 분석 도구 최소 호출 횟수 달성 여부 추적
     _REQUIRED_ANALYSIS_TOOLS = {"get_mil_summary", "get_attention_heatmap", "get_nuclei_summary", "get_metric_comparison"}
     _called_tools: set[str] = set()
+    _blocked_tools: dict[str, str] = {}  # tool_name → cached error (tool returned "do NOT retry")
 
     for iteration in range(settings.agent_max_iter + 10):  # extra headroom for pipeline steps
         live["iteration"] = iteration + 1
@@ -925,8 +926,17 @@ def run_agent_full(
                     tool_images = []
                     result_preview = tool_text
                     is_multimodal = False
+                elif fn_name in _blocked_tools:
+                    tool_text = _blocked_tools[fn_name]
+                    tool_images = []
+                    result_preview = tool_text
+                    is_multimodal = False
+                    raw = json.loads(tool_text)
                 else:
                     raw = _FULL_DISPATCH[fn_name](slide_id, fn_args)
+                    # 결과에 "do NOT retry" 포함 시 이후 호출 차단
+                    if isinstance(raw, dict) and "do NOT retry" in raw.get("error", ""):
+                        _blocked_tools[fn_name] = json.dumps(raw, ensure_ascii=False)
 
                     # Sync pipeline status
                     if fn_name == "get_pipeline_status" and isinstance(raw, dict):
